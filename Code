@@ -1,0 +1,99 @@
+#include <Wire.h>
+#include <SoftwareSerial.h>
+
+SoftwareSerial sim800l(10, 11); // RX, TX
+
+const int MPU6050_address = 0x68; // MPU6050 I2C address
+const int16_t AccelScaleFactor = 16384;
+const int16_t GyroScaleFactor = 131;
+
+int16_t AccX, AccY, AccZ, GyroX, GyroY, GyroZ;
+int fallThreshold = 200; // Adjust this value based on your testing
+
+int smsCounter = 0;
+unsigned long lastSmsTime = 0;
+const int maxSmsCount = 300;
+const int smsInterval = 1000; // 10 seconds
+
+void setup() {
+  Wire.begin();
+  Serial.begin(9600);
+  sim800l.begin(9600);
+
+  initializeMPU6050();
+}
+
+void loop() {
+  readMPU6050Data();
+
+  // Print MPU6050 data to Serial Monitor
+  Serial.print("AccX: "); Serial.print(AccX);
+  Serial.print("\tAccY: "); Serial.print(AccY);
+  Serial.print("\tAccZ: "); Serial.print(AccZ);
+  Serial.print("\tGyroX: "); Serial.print(GyroX);
+  Serial.print("\tGyroY: "); Serial.print(GyroY);
+  Serial.print("\tGyroZ: "); Serial.println(GyroZ);
+
+  // Check for fall detection
+  if (detectFall()) {
+    if (smsCounter < maxSmsCount && (millis() - lastSmsTime) >= smsInterval) {
+      if (sendEmergencySMS()) {
+        Serial.println("SMS sent successfully!");
+        smsCounter++;
+        lastSmsTime = millis();
+      } else {
+        Serial.println("Failed to send SMS.");
+      }
+    } else {
+      Serial.println("Maximum SMS limit reached or not enough time elapsed.");
+    }
+
+    delay(6000); // Wait for 600 milliseconds before restarting
+  }
+}
+
+void initializeMPU6050() {
+  Wire.beginTransmission(MPU6050_address);
+  Wire.write(0x6B);  // PWR_MGMT_1 register
+  Wire.write(0);     // set to zero (wakes up the MPU-6050)
+  Wire.endTransmission(true);
+}
+
+void readMPU6050Data() {
+  Wire.beginTransmission(MPU6050_address);
+  Wire.write(0x3B);  // starting with register 0x3B (ACCEL_XOUT_H)
+  Wire.endTransmission(false);
+  Wire.requestFrom(MPU6050_address, 14, true);
+
+  AccX = (Wire.read() << 8 | Wire.read()) / AccelScaleFactor;
+  AccY = (Wire.read() << 8 | Wire.read()) / AccelScaleFactor;
+  AccZ = (Wire.read() << 8 | Wire.read()) / AccelScaleFactor;
+
+  GyroX = (Wire.read() << 8 | Wire.read()) / GyroScaleFactor;
+  GyroY = (Wire.read() << 8 | Wire.read()) / GyroScaleFactor;
+  GyroZ = (Wire.read() << 8 | Wire.read()) / GyroScaleFactor;
+}
+
+bool detectFall() {
+  // Implement your fall detection logic here
+  // This is a simple example using the absolute value of the Y-axis gyroscope data
+  return abs(GyroY) > fallThreshold;
+}
+
+bool sendEmergencySMS() {
+  // Implement code to send an emergency SMS using the SIM800L module
+  // Use AT commands to communicate with the SIM800L module
+  sim800l.print("AT+CMGF=1\r");  // Set SMS mode to text
+  delay(100);
+  sim800l.print("AT+CMGS=\"+918200078390\"\r"); // Replace with the recipient's phone number
+  delay(100);
+  sim800l.print("Emergency:Fall detected! Your loved one may need assistance.Please check on them or send help immediately. Your prompt response could make a significant difference. Stay calm and act swiftly. Thank you.!\x1A");
+  delay(1000);
+
+  // Check if the SMS was sent successfully
+  if (sim800l.find("OK")) {
+    return true;
+  } else {
+    return false;
+  }
+}
